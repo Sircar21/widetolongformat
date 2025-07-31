@@ -1,0 +1,16 @@
+Please create an Excel file that acts as a Kanban-style engineering tracker for a small developer team (2–5 people) managing automation and data analytics projects. The Excel file should look and function like a dashboard, with the following requirements:
+
+Tracker Table: Include columns for Ticket #, Task/Feature, Status (To Do, In Progress, Blocked, Done), Owner, Priority, Start Date, Due Date, Blockers, Next Action, Comments/Notes, and Tech Stack/Tools.
+
+Kanban Board View: Visually group tasks by Status using Excel formatting, slicers, or pivot tables—so I can see all “To Do,” “In Progress,” “Blocked,” and “Done” items separately, similar to a Kanban board.
+
+Dashboard Visuals: Include summary boxes showing the count of tasks in each status, and a chart for task distribution by owner and priority.
+
+Interactivity: Allow me to filter tasks by Owner, Priority, and Status.
+
+Professional Layout: Apply color-coding to status, conditional formatting to highlight overdue items, and modern styling for dashboard visuals.
+
+Instructions: Add a sheet with brief instructions on how to use and customize the dashboard.
+
+Please generate the complete Excel file and ensure it is ready for immediate use and easy future updates.
+
