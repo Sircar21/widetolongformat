@@ -6,13 +6,7 @@ from rapidfuzz import fuzz
 NUM_RE = re.compile(r"[-]?\(?\d[\d,]*(?:\.\d+)?%?\)?")
 FUZZY_THRESHOLD = 80
 
-# Define the datapoints you want to find
-DATA_POINTS = {
-    "beginning_collateral_balance": ["Beginning Balance", "Beginning Collateral Balance"],
-    "ending_balance": ["Ending Balance", "Ending Pool Balance"],
-    "weighted_average_coupon": ["Weighted Average Coupon", "Weighted Avg Rate"],
-    "cumulative_realized_losses": ["Cumulative Realized Losses", "Cumulative Losses"]
-}
+DATA_POINTS = {}
 
 def is_year_like(val):
     """Avoid picking years like 2006."""
@@ -67,7 +61,7 @@ def extract_datapoints(pdf_path, datapoints):
     return results
 
 if __name__ == "__main__":
-    pdf_file = "wamu-2006-he2-investor-report-04-25-2024.PDF"  # replace with your PDF
+    pdf_file = "test.pdf"  # replace with your PDF
     extracted = extract_datapoints(pdf_file, DATA_POINTS)
     for k, v in extracted.items():
         print(f"{k}: {v}")
