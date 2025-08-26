@@ -5,9 +5,9 @@ from typing import List, Tuple, Optional, Dict, Any
 import json
 import io
 
-class AlternativePDFExtractor:
+class SectionBasedPDFExtractor:
     """
-    Alternative approaches for extracting data from complex PDF tables
+    Extract data from complex PDF tables using section-based approach
     """
     
     def __init__(self, pdf_path: str):
@@ -16,68 +16,108 @@ class AlternativePDFExtractor:
     
     # ==================== APPROACH 1: TEXT-BASED EXTRACTION ====================
     
-    def extract_by_text_search(self, page_no: int, table_identifier: str, 
+    def extract_by_text_search(self, page_no: int, section_identifier: str, 
                               column_name: str, row_name: str) -> Optional[str]:
         """
-        Extract data by searching through raw text and using patterns
+        Extract data by searching through raw text within a specific section
         Works well when tables are text-based but poorly structured
         """
         page = self.doc[page_no - 1]
         text = page.get_text()
         
         print(f"=== TEXT SEARCH METHOD ===")
-        print(f"Looking for table: '{table_identifier}'")
+        print(f"Looking for section: '{section_identifier}'")
         print(f"Target: Row='{row_name}', Column='{column_name}'")
         
         # Split text into lines
         lines = text.split('\n')
         lines = [line.strip() for line in lines if line.strip()]
         
-        # Find the table section
-        table_start = self._find_table_start_in_text(lines, table_identifier)
-        if table_start == -1:
-            print("Table identifier not found in text")
+        # Find the section
+        section_start, section_end = self._find_section_boundaries(lines, section_identifier)
+        if section_start == -1:
+            print("Section identifier not found in text")
             return None
         
-        # Extract table data from text
-        table_lines = self._extract_table_lines(lines[table_start:])
+        print(f"Found section from line {section_start} to {section_end}")
+        
+        # Extract section content
+        section_lines = lines[section_start:section_end]
+        
+        # Find table data within the section
+        table_lines = self._extract_table_lines_from_section(section_lines)
         
         # Parse the table structure
         result = self._parse_text_table(table_lines, column_name, row_name)
         return result
     
-    def _find_table_start_in_text(self, lines: List[str], identifier: str) -> int:
-        """Find where the table starts in text"""
-        identifier_lower = identifier.lower()
+    def _find_section_boundaries(self, lines: List[str], section_name: str) -> Tuple[int, int]:
+        """Find start and end of a section"""
+        section_name_lower = section_name.lower()
+        section_start = -1
+        section_end = len(lines)
         
+        # Find section start
         for i, line in enumerate(lines):
-            if identifier_lower in line.lower():
-                return i
+            line_lower = line.lower()
+            
+            # Look for section headers (various formats)
+            if (section_name_lower in line_lower and 
+                (line.isupper() or  # ALL CAPS sections
+                 line.startswith(section_name) or  # Exact start
+                 re.match(r'^[\d\.]*\s*' + re.escape(section_name), line, re.IGNORECASE) or  # Numbered sections
+                 len(line.split()) <= 5)):  # Short lines are likely headers
+                section_start = i
+                print(f"Section start found at line {i}: '{line}'")
+                break
         
-        return -1
+        if section_start == -1:
+            # Fallback: just look for the section name anywhere
+            for i, line in enumerate(lines):
+                if section_name_lower in line.lower():
+                    section_start = i
+                    print(f"Section found (fallback) at line {i}: '{line}'")
+                    break
+        
+        if section_start == -1:
+            return -1, -1
+        
+        # Find section end (next section or significant break)
+        for i in range(section_start + 1, len(lines)):
+            line = lines[i]
+            
+            # Check for next section indicators
+            if (len(line.split()) <= 5 and  # Short line (likely header)
+                (line.isupper() or  # ALL CAPS
+                 re.match(r'^[\d\.]+\s+[A-Z]', line) or  # Numbered section
+                 any(keyword in line.lower() for keyword in 
+                     ['section', 'chapter', 'part', 'appendix', 'summary', 'conclusion']))):
+                
+                # Make sure it's not just a table header within our section
+                if i - section_start > 10:  # Only if we have enough content
+                    section_end = i
+                    print(f"Section end found at line {i}: '{line}'")
+                    break
+        
+        return section_start, section_end
     
-    def _extract_table_lines(self, lines: List[str]) -> List[str]:
-        """Extract lines that likely belong to the table"""
+    def _extract_table_lines_from_section(self, section_lines: List[str]) -> List[str]:
+        """Extract lines that likely contain table data from section"""
         table_lines = []
         
-        for line in lines:
-            # Stop at next section/table
-            if any(keyword in line.lower() for keyword in ['table', 'figure', 'section', 'chapter']):
-                if len(table_lines) > 5:  # Only stop if we have enough lines
-                    break
-            
+        # Skip the section header line(s)
+        start_idx = 1 if section_lines else 0
+        
+        for i, line in enumerate(section_lines[start_idx:], start_idx):
             # Include lines that look like table data
             if self._looks_like_table_row(line):
                 table_lines.append(line)
-                
-            # Stop if we hit too many empty lines
-            if not line.strip() and len(table_lines) > 3:
-                consecutive_empty = 1
-                for next_line in lines[lines.index(line)+1:lines.index(line)+4]:
-                    if not next_line.strip():
-                        consecutive_empty += 1
-                if consecutive_empty >= 3:
-                    break
+            
+            # Also include lines that might be headers or row names
+            elif (len(line.split()) >= 2 and 
+                  not line.endswith(':') and  # Skip intro text
+                  not line.lower().startswith('the ')):  # Skip descriptive text
+                table_lines.append(line)
         
         return table_lines
     
@@ -156,10 +196,10 @@ class AlternativePDFExtractor:
     
     # ==================== APPROACH 2: COORDINATE-BASED EXTRACTION ====================
     
-    def extract_by_coordinates(self, page_no: int, table_identifier: str,
+    def extract_by_coordinates(self, page_no: int, section_identifier: str,
                               column_name: str, row_name: str) -> Optional[str]:
         """
-        Extract data using coordinate-based approach
+        Extract data using coordinate-based approach within a section
         Find text positions and extract based on spatial relationships
         """
         page = self.doc[page_no - 1]
@@ -169,27 +209,82 @@ class AlternativePDFExtractor:
         # Get all text blocks with coordinates
         text_dict = page.get_text("dict")
         
-        # Find table identifier location
-        table_rect = self._find_text_location(text_dict, table_identifier)
-        if table_rect is None:
-            print("Table identifier not found")
+        # Find section region first
+        section_region = self._find_section_region(text_dict, section_identifier)
+        if section_region is None:
+            print("Section identifier not found")
             return None
         
-        # Find column header location
-        column_rect = self._find_text_location(text_dict, column_name, search_area=table_rect)
+        print(f"Section region found: {section_region}")
+        
+        # Find column header location within section
+        column_rect = self._find_text_location(text_dict, column_name, search_area=section_region)
         if column_rect is None:
-            print(f"Column '{column_name}' not found")
+            print(f"Column '{column_name}' not found in section")
             return None
         
-        # Find row name location
-        row_rect = self._find_text_location(text_dict, row_name, search_area=table_rect)
+        # Find row name location within section
+        row_rect = self._find_text_location(text_dict, row_name, search_area=section_region)
         if row_rect is None:
-            print(f"Row '{row_name}' not found")
+            print(f"Row '{row_name}' not found in section")
             return None
         
         # Find intersection point (where row and column meet)
         value = self._find_value_at_intersection(text_dict, row_rect, column_rect)
         return value
+    
+    def _find_section_region(self, text_dict: dict, section_name: str) -> Optional[fitz.Rect]:
+        """Find the bounding region of a section"""
+        section_name_lower = section_name.lower()
+        
+        # Find the section header
+        section_block = None
+        for block in text_dict["blocks"]:
+            if "lines" in block:
+                for line in block["lines"]:
+                    line_text = ""
+                    for span in line["spans"]:
+                        line_text += span["text"]
+                    
+                    if (section_name_lower in line_text.lower() and
+                        (len(line_text.split()) <= 6 or  # Short lines are likely headers
+                         line_text.isupper() or  # ALL CAPS
+                         line_text.strip().startswith(section_name))):  # Starts with section name
+                        
+                        bbox = line["bbox"]
+                        section_block = fitz.Rect(bbox)
+                        print(f"Section header found: '{line_text.strip()}'")
+                        break
+            
+            if section_block:
+                break
+        
+        if not section_block:
+            # Fallback: just find any mention of section name
+            for block in text_dict["blocks"]:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            if section_name_lower in span["text"].lower():
+                                bbox = span["bbox"]
+                                section_block = fitz.Rect(bbox)
+                                break
+        
+        if not section_block:
+            return None
+        
+        # Estimate section region (area below the section header)
+        # Assume section extends to right edge of page and down significantly
+        page_rect = fitz.Rect(0, 0, 612, 792)  # Standard page size, adjust if needed
+        
+        section_region = fitz.Rect(
+            max(0, section_block.x0 - 50),  # Start a bit to the left
+            section_block.y0,  # Start at section header
+            page_rect.x1,  # Extend to page width
+            min(page_rect.y1, section_block.y1 + 400)  # Extend down 400 points
+        )
+        
+        return section_region
     
     def _find_text_location(self, text_dict: dict, search_text: str, 
                            search_area: fitz.Rect = None) -> Optional[fitz.Rect]:
@@ -244,10 +339,10 @@ class AlternativePDFExtractor:
     
     # ==================== APPROACH 3: REGION-BASED EXTRACTION ====================
     
-    def extract_by_region_analysis(self, page_no: int, table_identifier: str,
+    def extract_by_region_analysis(self, page_no: int, section_identifier: str,
                                   column_name: str, row_name: str) -> Optional[str]:
         """
-        Analyze page regions and extract text blocks spatially
+        Analyze page regions and extract text blocks spatially within a section
         Good for tables with clear spatial structure
         """
         print(f"=== REGION-BASED METHOD ===")
@@ -271,48 +366,67 @@ class AlternativePDFExtractor:
                             'y1': span["bbox"][3]
                         })
         
-        # Find table region
-        table_region = self._find_table_region_blocks(text_blocks, table_identifier)
-        if not table_region:
-            print("Table region not found")
+        # Find section region
+        section_region = self._find_section_region_blocks(text_blocks, section_identifier)
+        if not section_region:
+            print("Section region not found")
             return None
         
-        # Filter blocks within table region
-        table_blocks = self._get_blocks_in_region(text_blocks, table_region)
+        print(f"Section region: {section_region}")
         
-        # Find column and row positions
-        column_x = self._find_column_x_position(table_blocks, column_name)
-        row_y = self._find_row_y_position(table_blocks, row_name)
+        # Filter blocks within section region
+        section_blocks = self._get_blocks_in_region(text_blocks, section_region)
+        print(f"Found {len(section_blocks)} blocks in section")
+        
+        # Find column and row positions within section
+        column_x = self._find_column_x_position(section_blocks, column_name)
+        row_y = self._find_row_y_position(section_blocks, row_name)
         
         if column_x is None or row_y is None:
             print(f"Could not locate column_x={column_x} or row_y={row_y}")
             return None
         
         # Find value at intersection
-        value = self._find_value_at_position(table_blocks, column_x, row_y)
+        value = self._find_value_at_position(section_blocks, column_x, row_y)
         return value
     
-    def _find_table_region_blocks(self, text_blocks: List[dict], identifier: str) -> Optional[dict]:
-        """Find the bounding region of the table"""
-        identifier_lower = identifier.lower()
+    def _find_section_region_blocks(self, text_blocks: List[dict], section_name: str) -> Optional[dict]:
+        """Find the bounding region of the section"""
+        section_name_lower = section_name.lower()
         
-        # Find the identifier block
-        identifier_block = None
+        # Find the section header block
+        section_block = None
         for block in text_blocks:
-            if identifier_lower in block['text'].lower():
-                identifier_block = block
+            block_text = block['text'].lower()
+            
+            # Look for section header characteristics
+            if (section_name_lower in block_text and
+                (len(block['text'].split()) <= 6 or  # Short text
+                 block['text'].isupper() or  # ALL CAPS
+                 block['text'].strip().startswith(section_name))):  # Starts with section name
+                section_block = block
+                print(f"Section header block found: '{block['text']}'")
                 break
         
-        if not identifier_block:
+        if not section_block:
+            # Fallback: find any block containing section name
+            for block in text_blocks:
+                if section_name_lower in block['text'].lower():
+                    section_block = block
+                    break
+        
+        if not section_block:
             return None
         
-        # Estimate table region (area below the identifier)
-        min_x = identifier_block['x0'] - 50
-        max_x = identifier_block['x1'] + 200
-        min_y = identifier_block['y0']
-        max_y = identifier_block['y1'] + 300  # Assume table extends 300 points down
+        # Estimate section boundaries
+        section_region = {
+            'x0': max(0, section_block['x0'] - 50),  # Start a bit to the left
+            'y0': section_block['y0'],  # Start at section header
+            'x1': section_block['x1'] + 300,  # Extend to the right
+            'y1': section_block['y1'] + 400   # Extend down
+        }
         
-        return {'x0': min_x, 'y0': min_y, 'x1': max_x, 'y1': max_y}
+        return section_region
     
     def _get_blocks_in_region(self, text_blocks: List[dict], region: dict) -> List[dict]:
         """Get all text blocks within a region"""
@@ -368,10 +482,10 @@ class AlternativePDFExtractor:
     
     # ==================== APPROACH 4: LINE-BY-LINE PARSING ====================
     
-    def extract_by_line_parsing(self, page_no: int, table_identifier: str,
+    def extract_by_line_parsing(self, page_no: int, section_identifier: str,
                                column_name: str, row_name: str) -> Optional[str]:
         """
-        Parse PDF line by line to reconstruct table structure
+        Parse PDF line by line to reconstruct table structure within a section
         Good for tables that appear structured in text but not in table format
         """
         print(f"=== LINE PARSING METHOD ===")
@@ -384,14 +498,16 @@ class AlternativePDFExtractor:
         # Extract lines with their y-coordinates
         lines = self._extract_lines_with_coords(text_dict)
         
-        # Find table section
-        table_lines = self._find_table_section(lines, table_identifier)
-        if not table_lines:
-            print("Table section not found")
+        # Find section boundaries
+        section_lines = self._find_section_lines(lines, section_identifier)
+        if not section_lines:
+            print("Section lines not found")
             return None
         
-        # Parse table structure
-        table_data = self._parse_table_from_lines(table_lines)
+        print(f"Found {len(section_lines)} lines in section")
+        
+        # Parse table structure from section lines
+        table_data = self._parse_table_from_section_lines(section_lines)
         
         # Find the specific data point
         value = self._find_data_in_parsed_table(table_data, column_name, row_name)
@@ -426,46 +542,67 @@ class AlternativePDFExtractor:
         lines.sort(key=lambda x: x['y'])
         return lines
     
-    def _find_table_section(self, lines: List[dict], identifier: str) -> List[dict]:
-        """Find lines that belong to the table"""
-        identifier_lower = identifier.lower()
+    def _find_section_lines(self, lines: List[dict], section_name: str) -> List[dict]:
+        """Find lines that belong to the section"""
+        section_name_lower = section_name.lower()
         
-        # Find starting line
+        # Find section start
         start_idx = -1
         for i, line in enumerate(lines):
-            if identifier_lower in line['text'].lower():
+            line_text_lower = line['text'].lower()
+            
+            # Look for section header
+            if (section_name_lower in line_text_lower and
+                (len(line['text'].split()) <= 6 or  # Short lines are likely headers
+                 line['text'].isupper() or  # ALL CAPS
+                 line['text'].strip().startswith(section_name))):  # Starts with section name
                 start_idx = i
+                print(f"Section start at line {i}: '{line['text']}'")
                 break
+        
+        if start_idx == -1:
+            # Fallback: find any line with section name
+            for i, line in enumerate(lines):
+                if section_name_lower in line['text'].lower():
+                    start_idx = i
+                    print(f"Section found (fallback) at line {i}: '{line['text']}'")
+                    break
         
         if start_idx == -1:
             return []
         
-        # Extract table lines (until next section or empty space)
-        table_lines = []
-        for i in range(start_idx, len(lines)):
+        # Find section end
+        end_idx = len(lines)
+        for i in range(start_idx + 1, len(lines)):
             line = lines[i]
+            line_text = line['text']
             
-            # Stop conditions
-            if i > start_idx + 50:  # Maximum 50 lines
-                break
+            # Stop at next section
+            if (len(line_text.split()) <= 5 and  # Short line
+                (line_text.isupper() or  # ALL CAPS
+                 re.match(r'^[\d\.]+\s+[A-Z]', line_text) or  # Numbered section
+                 any(keyword in line_text.lower() for keyword in 
+                     ['section', 'chapter', 'part', 'appendix']))):
                 
-            # Stop at next major section
-            if (i > start_idx + 5 and 
-                any(keyword in line['text'].lower() for keyword in 
-                    ['section', 'table', 'figure', 'chapter', 'part'])):
-                break
-            
-            table_lines.append(line)
+                if i - start_idx > 5:  # Only if we have reasonable content
+                    end_idx = i
+                    print(f"Section end at line {i}: '{line_text}'")
+                    break
         
-        return table_lines
+        return lines[start_idx:end_idx]
     
-    def _parse_table_from_lines(self, lines: List[dict]) -> List[List[str]]:
-        """Parse table structure from lines"""
+    def _parse_table_from_section_lines(self, lines: List[dict]) -> List[List[str]]:
+        """Parse table structure from section lines"""
         table_data = []
         
-        for line in lines:
-            # Skip obvious header/title lines
-            if any(word in line['text'].lower() for word in ['table', 'figure']):
+        # Skip the section header
+        start_idx = 1 if lines else 0
+        
+        for line in lines[start_idx:]:
+            # Skip obvious non-table lines
+            if (line['text'].endswith(':') or  # Descriptive text
+                line['text'].lower().startswith('the ') or  # Prose
+                len(line['text'].split()) > 15):  # Long sentences
                 continue
             
             # Try to split line into columns
@@ -528,10 +665,10 @@ class AlternativePDFExtractor:
 
     # ==================== APPROACH 5: PATTERN MATCHING ====================
     
-    def extract_by_pattern_matching(self, page_no: int, table_identifier: str,
+    def extract_by_pattern_matching(self, page_no: int, section_identifier: str,
                                    column_name: str, row_name: str) -> Optional[str]:
         """
-        Use regex patterns to find data in structured text
+        Use regex patterns to find data in structured text within a section
         Good for consistently formatted documents
         """
         page = self.doc[page_no - 1]
@@ -539,42 +676,120 @@ class AlternativePDFExtractor:
         
         print(f"=== PATTERN MATCHING METHOD ===")
         
-        # Create patterns based on the identifiers
+        # Extract section text first
+        section_text = self._extract_section_text(text, section_identifier)
+        if not section_text:
+            print("Section not found in text")
+            return None
+        
+        print(f"Section text length: {len(section_text)} characters")
+        
+        # Create patterns to find the data within the section
         patterns = [
-            # Pattern 1: Row name followed by values
+            # Pattern 1: Row name followed by values in section
             rf'{re.escape(row_name)}\s*[:\-]?\s*([\d,.$%\s]+)',
             
-            # Pattern 2: Table with clear structure
-            rf'{re.escape(table_identifier)}.*?{re.escape(row_name)}\s*[:\-]?\s*([\d,.$%]+)',
-            
-            # Pattern 3: Multi-line table pattern
+            # Pattern 2: Table structure with column header and row
             rf'{re.escape(column_name)}.*?\n.*?{re.escape(row_name)}\s*[:\-]?\s*([\d,.$%]+)',
+            
+            # Pattern 3: Multi-column table pattern
+            rf'{re.escape(row_name)}\s*[:\-]?.*?{re.escape(column_name)}.*?([\d,.$%]+)',
+            
+            # Pattern 4: Simple value after row name
+            rf'{re.escape(row_name)}\s*[:\-]?\s*([^\n]*(?:[\d,.$%]+)[^\n]*)',
         ]
         
-        for pattern in patterns:
-            matches = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        for i, pattern in enumerate(patterns):
+            print(f"Trying pattern {i+1}: {pattern[:50]}...")
+            matches = re.search(pattern, section_text, re.IGNORECASE | re.DOTALL)
             if matches:
                 value = matches.group(1).strip()
+                print(f"Pattern {i+1} matched: '{value}'")
+                
                 # Clean up the extracted value
-                value = re.search(r'[\d,.$%]+', value)
-                if value:
-                    return value.group(0)
+                cleaned_value = self._extract_number_from_text(value)
+                if cleaned_value:
+                    return cleaned_value
+        
+        return None
+    
+    def _extract_section_text(self, full_text: str, section_name: str) -> Optional[str]:
+        """Extract text content of a specific section"""
+        section_name_lower = section_name.lower()
+        lines = full_text.split('\n')
+        
+        # Find section start
+        start_idx = -1
+        for i, line in enumerate(lines):
+            line_lower = line.lower().strip()
+            
+            if (section_name_lower in line_lower and
+                (line.isupper() or  # ALL CAPS section
+                 len(line.split()) <= 6 or  # Short header
+                 re.match(r'^[\d\.]*\s*' + re.escape(section_name), line, re.IGNORECASE))):  # Numbered section
+                start_idx = i
+                break
+        
+        if start_idx == -1:
+            # Fallback: just find section name
+            for i, line in enumerate(lines):
+                if section_name_lower in line.lower():
+                    start_idx = i
+                    break
+        
+        if start_idx == -1:
+            return None
+        
+        # Find section end
+        end_idx = len(lines)
+        for i in range(start_idx + 1, len(lines)):
+            line = lines[i].strip()
+            
+            # Stop at next section
+            if (len(line.split()) <= 5 and
+                (line.isupper() or
+                 re.match(r'^[\d\.]+\s+[A-Z]', line) or
+                 any(keyword in line.lower() for keyword in 
+                     ['section', 'chapter', 'part', 'appendix']))):
+                
+                if i - start_idx > 3:  # Only if reasonable content
+                    end_idx = i
+                    break
+        
+        section_text = '\n'.join(lines[start_idx:end_idx])
+        return section_text
+    
+    def _extract_number_from_text(self, text: str) -> Optional[str]:
+        """Extract the most likely number from text"""
+        # Look for number patterns
+        number_patterns = [
+            r'[\d,]+\.?\d*%?',  # Regular numbers with commas and percentages
+            r'\$[\d,]+\.?\d*',   # Dollar amounts
+            r'[\d,]+\.?\d*',     # Simple numbers
+        ]
+        
+        for pattern in number_patterns:
+            matches = re.findall(pattern, text)
+            if matches:
+                # Return the longest match (most likely to be the main value)
+                return max(matches, key=len)
         
         return None
     
     # ==================== MAIN EXTRACTION METHOD ====================
     
-    def extract_data(self, page_no: int, table_identifier: str,
+    def extract_data(self, page_no: int, section_identifier: str,
                     column_name: str, row_name: str,
                     methods: List[str] = None) -> Optional[str]:
         """
-        Try multiple extraction methods in sequence
+        Try multiple extraction methods in sequence for section-based extraction
         
         Available methods:
-        - 'text_search': Search through raw text
-        - 'coordinates': Use coordinate-based extraction  
-        - 'ocr': Convert to image and use OCR
-        - 'pattern': Use regex pattern matching
+        - 'text_search': Search through raw text within section
+        - 'coordinates': Use coordinate-based extraction within section
+        - 'region_analysis': Analyze spatial regions within section
+        - 'line_parsing': Parse section line by line
+        - 'pattern': Use regex pattern matching within section
         """
         
         if methods is None:
@@ -594,7 +809,7 @@ class AlternativePDFExtractor:
                 
             try:
                 print(f"\n--- Trying {method_name.upper()} method ---")
-                result = method_map[method_name](page_no, table_identifier, column_name, row_name)
+                result = method_map[method_name](page_no, section_identifier, column_name, row_name)
                 
                 if result:
                     print(f"✓ SUCCESS with {method_name}: {result}")
@@ -609,7 +824,7 @@ class AlternativePDFExtractor:
         print("All methods failed")
         return None
     
-    def debug_page_content(self, page_no: int):
+    def debug_page_content(self, page_no: int, section_name: str = None):
         """Debug method to see page content structure"""
         page = self.doc[page_no - 1]
         
@@ -619,7 +834,7 @@ class AlternativePDFExtractor:
         print("\n--- RAW TEXT ---")
         text = page.get_text()
         lines = [line.strip() for line in text.split('\n') if line.strip()]
-        for i, line in enumerate(lines[:20]):  # First 20 lines
+        for i, line in enumerate(lines[:30]):  # First 30 lines
             print(f"{i:2d}: {line}")
         
         # Method 2: Show text blocks with coordinates
@@ -628,7 +843,7 @@ class AlternativePDFExtractor:
         block_count = 0
         
         for block in text_dict["blocks"]:
-            if "lines" in block and block_count < 10:  # First 10 blocks
+            if "lines" in block and block_count < 15:  # First 15 blocks
                 print(f"\nBlock {block_count}:")
                 for line in block["lines"]:
                     for span in line["spans"]:
@@ -637,7 +852,19 @@ class AlternativePDFExtractor:
                             print(f"  [{bbox[0]:.1f}, {bbox[1]:.1f}] '{span['text'].strip()}'")
                 block_count += 1
         
-        # Method 3: Try to find potential tables
+        # Method 3: Show section-specific info if section name provided
+        if section_name:
+            print(f"\n--- SECTION ANALYSIS FOR '{section_name}' ---")
+            section_start, section_end = self._find_section_boundaries(lines, section_name)
+            if section_start != -1:
+                print(f"Section found from line {section_start} to {section_end}")
+                print("Section content:")
+                for i in range(section_start, min(section_end, section_start + 20)):
+                    print(f"  {i:2d}: {lines[i]}")
+            else:
+                print("Section not found")
+        
+        # Method 4: Try to find potential tables
         print("\n--- POTENTIAL TABLE INDICATORS ---")
         table_indicators = []
         for line in lines:
@@ -661,17 +888,20 @@ class AlternativePDFExtractor:
 
 def extract_with_debug(pdf_path: str, config: dict):
     """Extract data with debugging information"""
-    extractor = AlternativePDFExtractor(pdf_path)
+    extractor = SectionBasedPDFExtractor(pdf_path)
     
     try:
         # Show debug info first
         if config.get('debug', False):
-            extractor.debug_page_content(config['page_no'])
+            extractor.debug_page_content(
+                config['page_no'], 
+                config.get('section_identifier')
+            )
         
         # Try extraction
         result = extractor.extract_data(
             page_no=config['page_no'],
-            table_identifier=config['table_identifier'],
+            section_identifier=config['section_identifier'],
             column_name=config['column_name'],
             row_name=config['row_name'],
             methods=config.get('methods', None)
@@ -682,12 +912,40 @@ def extract_with_debug(pdf_path: str, config: dict):
     finally:
         extractor.close()
 
+def batch_extract(pdf_path: str, extraction_configs: List[dict]):
+    """Extract multiple data points from a PDF"""
+    extractor = SectionBasedPDFExtractor(pdf_path)
+    results = {}
+    
+    try:
+        for config in extraction_configs:
+            data_point_name = config.get('name', f"data_point_{len(results)}")
+            print(f"\n{'='*50}")
+            print(f"EXTRACTING: {data_point_name}")
+            print(f"{'='*50}")
+            
+            extracted_value = extractor.extract_data(
+                page_no=config['page_no'],
+                section_identifier=config['section_identifier'],
+                column_name=config['column_name'],
+                row_name=config['row_name'],
+                methods=config.get('methods', None)
+            )
+            
+            results[data_point_name] = extracted_value
+            print(f"Result for {data_point_name}: {extracted_value}")
+            
+    finally:
+        extractor.close()
+    
+    return results
+
 # Example usage
 if __name__ == "__main__":
-    # Configuration
+    # Single extraction with debugging
     config = {
         'page_no': 1,
-        'table_identifier': 'Financial Summary',
+        'section_identifier': 'Financial Performance',  # Section name instead of table name
         'column_name': 'Q1 2024', 
         'row_name': 'Total Revenue',
         'methods': ['text_search', 'line_parsing', 'pattern'],  # Specify methods to try
@@ -696,3 +954,38 @@ if __name__ == "__main__":
     
     # result = extract_with_debug('sample.pdf', config)
     # print(f"Final result: {result}")
+    
+    # Multiple extractions example
+    extraction_configs = [
+        {
+            'name': 'total_revenue_q1',
+            'page_no': 1,
+            'section_identifier': 'Financial Performance',
+            'column_name': 'Q1 2024',
+            'row_name': 'Total Revenue'
+        },
+        {
+            'name': 'net_income_q2',
+            'page_no': 1,
+            'section_identifier': 'Financial Performance', 
+            'column_name': 'Q2 2024',
+            'row_name': 'Net Income'
+        },
+        {
+            'name': 'expenses_q1',
+            'page_no': 2,
+            'section_identifier': 'Operating Expenses',
+            'column_name': 'Q1 2024',
+            'row_name': 'Total Expenses'
+        }
+    ]
+    
+    # results = batch_extract('sample.pdf', extraction_configs)
+    # print("\nAll Results:")
+    # for name, value in results.items():
+    #     print(f"{name}: {value}")
+    
+    # Just debug page structure
+    # extractor = SectionBasedPDFExtractor('sample.pdf')
+    # extractor.debug_page_content(1, 'Financial Performance')
+    # extractor.close()
