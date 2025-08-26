@@ -1,0 +1,492 @@
+import fitz  # PyMuPDF
+import pandas as pd
+import pdfplumber
+import camelot
+import tabula
+import re
+from typing import Optional, Union, Dict, Any, List, Tuple
+import numpy as np
+
+class ComplexTableExtractor:
+    """
+    Extract data from complex PDF tables with various structures
+    """
+    
+    def __init__(self, pdf_path: str):
+        self.pdf_path = pdf_path
+        self.doc = fitz.open(pdf_path)
+    
+    def extract_from_table(self, 
+                          page_no: int,
+                          table_identifier: str,  # section or table name
+                          column_name: str,
+                          row_name: str,
+                          search_method: str = 'auto') -> Any:
+        """
+        Extract data from complex table structures
+        
+        Args:
+            page_no: Page number (1-indexed)
+            table_identifier: Section name or table name/title
+            column_name: Name of the column to find
+            row_name: Name of the row to find
+            search_method: 'auto', 'pymupdf', 'pdfplumber', 'camelot', 'tabula'
+        
+        Returns:
+            Extracted data point
+        """
+        
+        if search_method == 'auto':
+            # Try multiple methods in order of reliability for complex tables
+            methods = [
+                ('pdfplumber', self._extract_with_pdfplumber_advanced),
+                ('camelot', self._extract_with_camelot_advanced),
+                ('tabula', self._extract_with_tabula),
+                ('pymupdf', self._extract_with_pymupdf_advanced),
+            ]
+        else:
+            method_map = {
+                'pymupdf': self._extract_with_pymupdf_advanced,
+                'pdfplumber': self._extract_with_pdfplumber_advanced,
+                'camelot': self._extract_with_camelot_advanced,
+                'tabula': self._extract_with_tabula
+            }
+            methods = [(search_method, method_map[search_method])]
+        
+        for method_name, method_func in methods:
+            try:
+                print(f"Trying {method_name}...")
+                result = method_func(page_no, table_identifier, column_name, row_name)
+                if result is not None:
+                    print(f"Success with {method_name}: {result}")
+                    return result
+            except Exception as e:
+                print(f"{method_name} failed: {e}")
+                continue
+        
+        return None
+    
+    def _extract_with_pdfplumber_advanced(self, page_no, table_identifier, column_name, row_name):
+        """Advanced extraction with pdfplumber - best for complex layouts"""
+        with pdfplumber.open(self.pdf_path) as pdf:
+            page = pdf.pages[page_no - 1]
+            
+            # Get all tables from the page
+            tables = page.extract_tables()
+            page_text = page.extract_text()
+            
+            # Find the target table
+            target_table = self._find_target_table_pdfplumber(
+                page, tables, page_text, table_identifier
+            )
+            
+            if target_table is None:
+                return None
+            
+            # Convert to DataFrame and clean
+            df = self._create_clean_dataframe(target_table)
+            
+            # Extract the specific data point
+            return self._extract_data_from_dataframe(df, column_name, row_name)
+    
+    def _extract_with_camelot_advanced(self, page_no, table_identifier, column_name, row_name):
+        """Advanced extraction with Camelot - good for lattice tables"""
+        try:
+            # Try lattice first (for tables with clear borders)
+            tables = camelot.read_pdf(self.pdf_path, pages=str(page_no), flavor='lattice')
+            
+            if len(tables) == 0:
+                # Try stream method (for tables without clear borders)
+                tables = camelot.read_pdf(self.pdf_path, pages=str(page_no), flavor='stream')
+            
+            if len(tables) == 0:
+                return None
+            
+            # Find target table by analyzing table content
+            target_df = self._find_target_table_camelot(tables, table_identifier)
+            
+            if target_df is None:
+                return None
+            
+            # Clean the DataFrame
+            target_df = self._clean_dataframe(target_df)
+            
+            # Extract the data point
+            return self._extract_data_from_dataframe(target_df, column_name, row_name)
+            
+        except Exception as e:
+            print(f"Camelot error: {e}")
+            return None
+    
+    def _extract_with_tabula(self, page_no, table_identifier, column_name, row_name):
+        """Extract using tabula-py - good for complex table structures"""
+        try:
+            # Extract all tables from the page
+            tables = tabula.read_pdf(self.pdf_path, pages=page_no, multiple_tables=True)
+            
+            if not tables:
+                return None
+            
+            # Find target table
+            target_df = self._find_target_table_tabula(tables, table_identifier)
+            
+            if target_df is None:
+                return None
+            
+            # Clean the DataFrame
+            target_df = self._clean_dataframe(target_df)
+            
+            # Extract the data point
+            return self._extract_data_from_dataframe(target_df, column_name, row_name)
+            
+        except Exception as e:
+            print(f"Tabula error: {e}")
+            return None
+    
+    def _extract_with_pymupdf_advanced(self, page_no, table_identifier, column_name, row_name):
+        """Advanced PyMuPDF extraction with better table detection"""
+        page = self.doc[page_no - 1]
+        page_text = page.get_text()
+        
+        # Find tables
+        tables = page.find_tables()
+        
+        if not tables:
+            return None
+        
+        # Find target table
+        target_table = self._find_target_table_pymupdf(
+            page, tables, page_text, table_identifier
+        )
+        
+        if target_table is None:
+            return None
+        
+        # Extract table data
+        table_data = target_table.extract()
+        df = pd.DataFrame(table_data[1:], columns=table_data[0] if table_data else [])
+        
+        # Clean the DataFrame
+        df = self._clean_dataframe(df)
+        
+        # Extract the data point
+        return self._extract_data_from_dataframe(df, column_name, row_name)
+    
+    def _find_target_table_pdfplumber(self, page, tables, page_text, table_identifier):
+        """Find target table using pdfplumber with context analysis"""
+        if not tables:
+            return None
+        
+        # If only one table, return it
+        if len(tables) == 1:
+            return tables[0]
+        
+        # Try to find table by identifier
+        identifier_lower = table_identifier.lower()
+        
+        # Method 1: Check if table contains the identifier in its content
+        for table in tables:
+            table_text = self._get_table_text_content(table).lower()
+            if identifier_lower in table_text:
+                return table
+        
+        # Method 2: Check text before each table for identifier
+        for i, table in enumerate(tables):
+            # Get approximate position of table (this is simplified)
+            if identifier_lower in page_text.lower():
+                return table
+        
+        # Method 3: Return largest table (most likely to be the main table)
+        return max(tables, key=lambda t: len(t) * len(t[0]) if t and t[0] else 0)
+    
+    def _find_target_table_camelot(self, tables, table_identifier):
+        """Find target table from Camelot tables"""
+        identifier_lower = table_identifier.lower()
+        
+        for table in tables:
+            df = table.df
+            # Check if identifier appears in table content
+            table_text = df.to_string().lower()
+            if identifier_lower in table_text:
+                return df
+        
+        # Return the largest table (by number of cells)
+        if tables:
+            return max(tables, key=lambda t: t.df.size).df
+        
+        return None
+    
+    def _find_target_table_tabula(self, tables, table_identifier):
+        """Find target table from Tabula tables"""
+        identifier_lower = table_identifier.lower()
+        
+        for df in tables:
+            if df is not None and not df.empty:
+                table_text = df.to_string().lower()
+                if identifier_lower in table_text:
+                    return df
+        
+        # Return the largest non-empty table
+        valid_tables = [df for df in tables if df is not None and not df.empty]
+        if valid_tables:
+            return max(valid_tables, key=lambda df: df.size)
+        
+        return None
+    
+    def _find_target_table_pymupdf(self, page, tables, page_text, table_identifier):
+        """Find target table using PyMuPDF with context"""
+        if not tables:
+            return None
+        
+        identifier_lower = table_identifier.lower()
+        
+        # Check each table's surrounding text
+        for table in tables:
+            bbox = table.bbox
+            # Check text above the table
+            above_rect = fitz.Rect(bbox.x0, max(0, bbox.y0 - 100), bbox.x1, bbox.y0)
+            above_text = page.get_textbox(above_rect).lower()
+            
+            if identifier_lower in above_text:
+                return table
+        
+        # Return first table if no match found
+        return tables[0]
+    
+    def _create_clean_dataframe(self, table_data):
+        """Create a clean DataFrame from raw table data"""
+        if not table_data or not table_data[0]:
+            return pd.DataFrame()
+        
+        # Find the header row (usually the first non-empty row)
+        headers = None
+        data_rows = []
+        
+        for i, row in enumerate(table_data):
+            if any(cell and str(cell).strip() for cell in row):  # Non-empty row
+                if headers is None:
+                    headers = [str(cell).strip() if cell else f"Col_{j}" for j, cell in enumerate(row)]
+                else:
+                    data_rows.append(row)
+        
+        if headers is None:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(data_rows, columns=headers)
+        return self._clean_dataframe(df)
+    
+    def _clean_dataframe(self, df):
+        """Clean and standardize DataFrame"""
+        if df.empty:
+            return df
+        
+        # Remove completely empty rows and columns
+        df = df.dropna(how='all', axis=0)  # Remove empty rows
+        df = df.dropna(how='all', axis=1)  # Remove empty columns
+        
+        # Reset index
+        df = df.reset_index(drop=True)
+        
+        # Clean column names
+        df.columns = [str(col).strip().replace('\n', ' ').replace('\r', ' ') 
+                     for col in df.columns]
+        
+        # Clean cell values
+        for col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].str.replace('\n', ' ').str.replace('\r', ' ')
+            df[col] = df[col].replace('nan', '')
+        
+        return df
+    
+    def _extract_data_from_dataframe(self, df, column_name, row_name):
+        """Extract specific data point from DataFrame using fuzzy matching"""
+        if df.empty:
+            return None
+        
+        print(f"DataFrame shape: {df.shape}")
+        print(f"Columns: {list(df.columns)}")
+        print(f"Looking for column: '{column_name}', row: '{row_name}'")
+        
+        # Find column (fuzzy matching)
+        target_col_idx = self._find_column_index(df, column_name)
+        if target_col_idx is None:
+            print(f"Column '{column_name}' not found")
+            return None
+        
+        # Find row (fuzzy matching)
+        target_row_idx = self._find_row_index(df, row_name)
+        if target_row_idx is None:
+            print(f"Row '{row_name}' not found")
+            return None
+        
+        # Extract the value
+        try:
+            value = df.iloc[target_row_idx, target_col_idx]
+            print(f"Found value at row {target_row_idx}, col {target_col_idx}: '{value}'")
+            return self._clean_extracted_value(value)
+        except Exception as e:
+            print(f"Error extracting value: {e}")
+            return None
+    
+    def _find_column_index(self, df, column_name):
+        """Find column index using fuzzy matching"""
+        column_name_lower = column_name.lower().strip()
+        
+        # Exact match first
+        for i, col in enumerate(df.columns):
+            if str(col).lower().strip() == column_name_lower:
+                return i
+        
+        # Partial match
+        for i, col in enumerate(df.columns):
+            col_lower = str(col).lower().strip()
+            if column_name_lower in col_lower or col_lower in column_name_lower:
+                return i
+        
+        # Word-based matching
+        column_words = set(column_name_lower.split())
+        for i, col in enumerate(df.columns):
+            col_words = set(str(col).lower().strip().split())
+            if column_words.intersection(col_words):
+                return i
+        
+        return None
+    
+    def _find_row_index(self, df, row_name):
+        """Find row index using fuzzy matching"""
+        row_name_lower = row_name.lower().strip()
+        
+        # Check each row for the row name (usually in first few columns)
+        for row_idx in range(len(df)):
+            for col_idx in range(min(3, len(df.columns))):  # Check first 3 columns
+                cell_value = str(df.iloc[row_idx, col_idx]).lower().strip()
+                
+                # Exact match
+                if cell_value == row_name_lower:
+                    return row_idx
+                
+                # Partial match
+                if row_name_lower in cell_value or cell_value in row_name_lower:
+                    return row_idx
+        
+        # Word-based matching
+        row_words = set(row_name_lower.split())
+        for row_idx in range(len(df)):
+            for col_idx in range(min(3, len(df.columns))):
+                cell_value = str(df.iloc[row_idx, col_idx]).lower().strip()
+                cell_words = set(cell_value.split())
+                if row_words.intersection(cell_words):
+                    return row_idx
+        
+        return None
+    
+    def _get_table_text_content(self, table):
+        """Get text content from a table for searching"""
+        if not table:
+            return ""
+        
+        text_content = []
+        for row in table:
+            for cell in row:
+                if cell:
+                    text_content.append(str(cell))
+        
+        return " ".join(text_content)
+    
+    def _clean_extracted_value(self, value):
+        """Clean and format the extracted value"""
+        if pd.isna(value) or value == '' or str(value).strip() == '':
+            return None
+        
+        cleaned_value = str(value).strip()
+        
+        # Try to convert to number if it looks like one
+        try:
+            # Remove common formatting characters
+            num_str = cleaned_value.replace(',', '').replace('$', '').replace('%', '')
+            if num_str.replace('.', '').replace('-', '').isdigit():
+                if '.' in num_str:
+                    return float(num_str)
+                else:
+                    return int(num_str)
+        except:
+            pass
+        
+        return cleaned_value
+    
+    def debug_table_structure(self, page_no: int, table_identifier: str = None):
+        """Debug method to inspect table structure"""
+        print(f"=== Debugging Page {page_no} ===")
+        
+        with pdfplumber.open(self.pdf_path) as pdf:
+            page = pdf.pages[page_no - 1]
+            tables = page.extract_tables()
+            
+            print(f"Found {len(tables)} tables")
+            
+            for i, table in enumerate(tables):
+                print(f"\n--- Table {i+1} ---")
+                if table and len(table) > 0:
+                    print(f"Dimensions: {len(table)} rows x {len(table[0])} columns")
+                    print("Headers:", table[0] if table else "None")
+                    print("First few rows:")
+                    for j, row in enumerate(table[:3]):
+                        print(f"  Row {j}: {row}")
+                else:
+                    print("Empty table")
+    
+    def close(self):
+        """Close the PDF document"""
+        self.doc.close()
+
+# Usage example
+def extract_table_data(pdf_path: str, extraction_config: dict):
+    """
+    Extract data from complex PDF table
+    
+    Args:
+        pdf_path: Path to PDF file
+        extraction_config: Configuration dictionary with extraction parameters
+    
+    Returns:
+        Extracted value
+    """
+    extractor = ComplexTableExtractor(pdf_path)
+    
+    try:
+        # Optional: Debug table structure first
+        if extraction_config.get('debug', False):
+            extractor.debug_table_structure(
+                extraction_config['page_no'], 
+                extraction_config.get('table_identifier')
+            )
+        
+        # Extract the data
+        result = extractor.extract_from_table(
+            page_no=extraction_config['page_no'],
+            table_identifier=extraction_config['table_identifier'],
+            column_name=extraction_config['column_name'],
+            row_name=extraction_config['row_name'],
+            search_method=extraction_config.get('method', 'auto')
+        )
+        
+        return result
+    
+    finally:
+        extractor.close()
+
+# Example usage:
+if __name__ == "__main__":
+    # Example configuration
+    config = {
+        'page_no': 1,
+        'table_identifier': 'Financial Summary',  # or section name
+        'column_name': 'Q1 2024',
+        'row_name': 'Total Revenue',
+        'method': 'auto',  # or specific method
+        'debug': True  # Set to True to see table structure
+    }
+    
+    # result = extract_table_data('sample.pdf', config)
+    # print(f"Extracted value: {result}")
