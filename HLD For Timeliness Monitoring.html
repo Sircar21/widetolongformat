@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<!-- saved from url=(0031)http://127.0.0.1:5500/test.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLA Monitoring System - Optimized Architecture</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #e9ecef;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .container {
+            max-width: 1300px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: #ffffff;
+            padding: 30px;
+            text-align: center;
+            border-bottom: 2px solid #ffffff;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+        .header p {
+            margin: 5px 0 0;
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        .diagram-wrapper {
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        .diagram-area {
+            position: relative;
+            width: 100%;
+            height: 1600px;
+            margin: 0 auto;
+        }
+        .layer-bg {
+            position: absolute;
+            background: rgba(30, 60, 114, 0.05);
+            border: 2px solid rgba(30, 60, 114, 0.2);
+            border-radius: 10px;
+            z-index: 0;
+            padding: 15px;
+        }
+        .layer-label {
+            position: absolute;
+            font-weight: 600;
+            font-size: 15px;
+            color: #1e3c72;
+            background: #ffffff;
+            padding: 10px 18px;
+            border-radius: 20px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+            z-index: 2;
+        }
+        .component {
+            position: absolute;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease;
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+        }
+        .component:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+        }
+        .component-title {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #1e3c72;
+        }
+        .component-subtitle {
+            font-size: 11px;
+            color: #555555;
+            line-height: 1.3;
+        }
+        /* Layer Positions */
+        .data-layer-bg { top: 40px; left: 80px; width: 1140px; height: 140px; }
+        .data-layer-label { top: 20px; left: 100px; }
+        .orchestration-layer-bg { top: 220px; left: 80px; width: 1140px; height: 140px; }
+        .orchestration-layer-label { top: 200px; left: 100px; }
+        .decision-layer-bg { top: 400px; left: 80px; width: 1140px; height: 400px; }
+        .decision-layer-label { top: 380px; left: 100px; }
+        .integration-layer-bg { top: 850px; left: 80px; width: 1140px; height: 180px; }
+        .integration-layer-label { top: 830px; left: 100px; }
+        .presentation-layer-bg { top: 1080px; left: 80px; width: 1140px; height: 140px; }
+        .presentation-layer-label { top: 1060px; left: 100px; }
+        /* Component Styles */
+        .database { background: #4a90e2; color: #ffffff; width: 160px; height: 70px; border: none; }
+        .scheduler { background: #50c878; color: #ffffff; width: 170px; height: 70px; border: none; }
+        .processing { background: #f5a623; color: #ffffff; width: 150px; height: 70px; border: none; }
+        .decision { background: #e94e77; color: #ffffff; width: 130px; height: 130px; transform: rotate(45deg); border: none; }
+        .decision-text { transform: rotate(-45deg); font-size: 13px; font-weight: 600; line-height: 1.2; }
+        .external { background: #d3d3d3; color: #333333; width: 160px; height: 70px; border: 2px dashed #999999; }
+        .repository { background: #9b59b6; color: #ffffff; width: 150px; height: 70px; border: none; }
+        .reporting { background: #27ae60; color: #ffffff; width: 150px; height: 70px; border: none; }
+        /* Component Positions */
+        .comp-sybase { top: 70px; left: 120px; }
+        .comp-intex { top: 70px; left: 320px; }
+        .comp-audit { top: 70px; left: 520px; }
+        .comp-vault { top: 70px; left: 720px; }
+        .comp-airflow { top: 250px; left: 120px; }
+        .comp-calculate { top: 250px; left: 320px; }
+        .comp-check { top: 250px; left: 520px; }
+        .comp-quality { top: 250px; left: 720px; }
+        .comp-decision { top: 450px; left: 505px; }
+        .comp-verify { top: 590px; left: 320px; }
+        .comp-issue { top: 590px; left: 690px; }
+        .comp-classify { top: 670px; left: 505px; }
+        .comp-update { top: 590px; left: 320px; }
+        .comp-escalate { top: 750px; left: 690px; }
+        .comp-jira { top: 880px; left: 120px; }
+        .comp-create { top: 880px; left: 320px; }
+        .comp-notify { top: 880px; left: 520px; }
+        .comp-monitor { top: 880px; left: 720px; }
+        .comp-log { top: 880px; left: 920px; }
+        .comp-powerbi { top: 1110px; left: 450px; }
+        .comp-dashboard { top: 1110px; left: 650px; }
+        /* Flow Labels */
+        .flow-label {
+            position: absolute;
+            background: #ffffff;
+            padding: 10px 15px;
+            border-radius: 15px;
+            font-size: 13px;
+            font-weight: 600;
+            z-index: 5;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+        }
+        .flow-yes { top: 530px; left: 440px; border: 2px solid #50c878; color: #50c878; }
+        .flow-no { top: 530px; left: 570px; border: 2px solid #e94e77; color: #e94e77; font-size: 14px; padding: 10px 18px; }
+        .flow-update { top: 630px; left: 260px; border: 2px solid #27ae60; color: #27ae60; }
+        .flow-process { top: 630px; left: 710px; border: 2px solid #f5a623; color: #f5a623; }
+        /* SVG Styles */
+        .flow-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .arrow {
+            stroke-width: 2;
+            fill: none;
+            marker-end: url(#arrowhead);
+        }
+        .arrow-main { stroke: #1e3c72; }
+        .arrow-success { stroke: #50c878; marker-end: url(#arrowhead-green); }
+        .arrow-error { stroke: #e94e77; stroke-width: 3; marker-end: url(#arrowhead-red); }
+        .arrow-data { stroke: #4a90e2; stroke-dasharray: 6, 6; }
+        .arrow-update { stroke: #27ae60; marker-end: url(#arrowhead-green); }
+        .arrow-process { stroke: #f5a623; marker-end: url(#arrowhead-orange); }
+        /* Legend */
+        .legend {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            background: #ffffff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            width: 220px;
+            font-size: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            margin-right: 8px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SLA Monitoring System</h1>
+            <p>High Level Diagram Architecture</p>
+        </div>
+        <div class="diagram-wrapper">
+            <div class="diagram-area">
+                <!-- Layer Backgrounds -->
+                <div class="layer-bg data-layer-bg"></div>
+                <div class="layer-label data-layer-label">Data Connectivity Layer</div>
+                <div class="layer-bg orchestration-layer-bg"></div>
+                <div class="layer-label orchestration-layer-label">Orchestration &amp; Processing Layer</div>
+                <div class="layer-bg decision-layer-bg"></div>
+                <div class="layer-label decision-layer-label">Business Logic &amp; Decision Layer</div>
+                <div class="layer-bg integration-layer-bg"></div>
+                <div class="layer-label integration-layer-label">Integration &amp; Action Layer</div>
+                <div class="layer-bg presentation-layer-bg"></div>
+                <div class="layer-label presentation-layer-label">Presentation &amp; Security Layer</div>
+
+                <!-- SVG for Arrows and Flow -->
+                <svg class="flow-svg">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#1e3c72"></polygon>
+                        </marker>
+                        <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#50c878"></polygon>
+                        </marker>
+                        <marker id="arrowhead-red" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+                            <polygon points="0 0, 12 4, 0 8" fill="#e94e77"></polygon>
+                        </marker>
+                        <marker id="arrowhead-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#f5a623"></polygon>
+                        </marker>
+                    </defs>
+                    <!-- Main Process Flow -->
+                    <path class="arrow arrow-main" d="M 180 140 L 180 210"></path>
+                    <path class="arrow arrow-main" d="M 290 290 L 370 290"></path>
+                    <path class="arrow arrow-main" d="M 570 290 L 650 290"></path>
+                    <path class="arrow arrow-main" d="M 850 290 L 770 290"></path>
+                    <path class="arrow arrow-main" d="M 570 330 L 570 440"></path>
+                    <!-- Decision Flows -->
+                    <path class="arrow arrow-success" d="M 570 620 L 420 630"></path>
+                    <path class="arrow arrow-update" d="M 420 660 L 470 1110"></path>
+                    <path class="arrow arrow-error" d="M 720 620 L 770 630"></path>
+                    <!-- NO Path Flows -->
+                    <path class="arrow arrow-process" d="M 770 660 L 770 700"></path>
+                    <path class="arrow arrow-process" d="M 770 740 L 770 820"></path>
+                    <!-- To Integration Layer -->
+                    <path class="arrow arrow-main" d="M 570 780 L 180 880"></path>
+                    <path class="arrow arrow-main" d="M 570 780 L 360 880"></path>
+                    <path class="arrow arrow-main" d="M 570 780 L 570 880"></path>
+                    <path class="arrow arrow-main" d="M 570 780 L 780 880"></path>
+                    <path class="arrow arrow-main" d="M 570 780 L 950 880"></path>
+                    <!-- To Presentation Layer -->
+                    <path class="arrow arrow-main" d="M 950 940 L 470 1110"></path>
+                    <path class="arrow arrow-main" d="M 570 1190 L 650 1190"></path>
+                    <!-- Data Connections -->
+                    <path class="arrow arrow-data" d="M 160 110 L 290 210"></path>
+                    <path class="arrow arrow-data" d="M 450 110 L 570 210"></path>
+                    <path class="arrow arrow-data" d="M 670 110 L 850 880"></path>
+                    <path class="arrow arrow-data" d="M 730 110 L 570 440"></path>
+                </svg>
+
+                <!-- Components -->
+                <div class="component database comp-sybase">
+                    <div class="component-title">Sybase Prod DB</div>
+                    <div class="component-subtitle">Read-Only Access</div>
+                </div>
+                <div class="component database comp-intex">
+                    <div class="component-title">Intex Source DB</div>
+                    <div class="component-subtitle">Read-Only Access</div>
+                </div>
+                <div class="component database comp-audit">
+                    <div class="component-title">Audit Repository</div>
+                    <div class="component-subtitle">Read/Write Access</div>
+                </div>
+                <div class="component database comp-vault">
+                    <div class="component-title">HashiCorp Vault</div>
+                    <div class="component-subtitle">Secrets Management</div>
+                </div>
+                <div class="component scheduler comp-airflow">
+                    <div class="component-title">Apache Airflow</div>
+                    <div class="component-subtitle">Workflow Scheduler</div>
+                </div>
+                <div class="component processing comp-calculate">
+                    <div class="component-title">Calculate Expected</div>
+                    <div class="component-subtitle">Arrival Times</div>
+                </div>
+                <div class="component processing comp-check">
+                    <div class="component-title">Check Actual</div>
+                    <div class="component-subtitle">Data Arrival</div>
+                </div>
+                <div class="component processing comp-quality">
+                    <div class="component-title">Data Quality</div>
+                    <div class="component-subtitle">Validation</div>
+                </div>
+                <div class="component decision comp-decision">
+                    <div class="decision-text">Data On Time?</div>
+                </div>
+                <div class="component processing comp-verify">
+                    <div class="component-title">Verify Data</div>
+                    <div class="component-subtitle">In Intex</div>
+                </div>
+                <div class="component processing comp-issue">
+                    <div class="component-title">Detect Issue</div>
+                    <div class="component-subtitle">SLA Breach</div>
+                </div>
+                <div class="component processing comp-classify">
+                    <div class="component-title">Classify Issue</div>
+                    <div class="component-subtitle">Severity</div>
+                </div>
+                <div class="component processing comp-update">
+                    <div class="component-title">Update Reports</div>
+                    <div class="component-subtitle">Good Data</div>
+                </div>
+                <div class="component processing comp-escalate">
+                    <div class="component-title">Escalate Issue</div>
+                    <div class="component-subtitle">To Team</div>
+                </div>
+                <div class="component external comp-jira">
+                    <div class="component-title">JIRA Connector</div>
+                    <div class="component-subtitle">API Integration</div>
+                </div>
+                <div class="component external comp-create">
+                    <div class="component-title">Create/Update</div>
+                    <div class="component-subtitle">Ticket</div>
+                </div>
+                <div class="component external comp-notify">
+                    <div class="component-title">Notification</div>
+                    <div class="component-subtitle">Service</div>
+                </div>
+                <div class="component external comp-monitor">
+                    <div class="component-title">Monitoring</div>
+                    <div class="component-subtitle">Alerting</div>
+                </div>
+                <div class="component repository comp-log">
+                    <div class="component-title">Log Result</div>
+                    <div class="component-subtitle">Audit Trail</div>
+                </div>
+                <div class="component reporting comp-powerbi">
+                    <div class="component-title">Power BI</div>
+                    <div class="component-subtitle">Semantic Layer</div>
+                </div>
+                <div class="component reporting comp-dashboard">
+                    <div class="component-title">Dashboards</div>
+                    <div class="component-subtitle">Refresh</div>
+                </div>
+
+                <!-- Flow Labels -->
+                <div class="flow-label flow-yes">YES</div>
+                <div class="flow-label flow-no">NO</div>
+                <div class="flow-label flow-update">Update Reports</div>
+                <div class="flow-label flow-process">Process Issue</div>
+
+                <!-- Legend -->
+                <div class="legend">
+                    <h3 style="font-size: 14px; color: #1e3c72; margin-bottom: 10px;">Legend</h3>
+                    <div class="legend-item"><div class="legend-color" style="background: #4a90e2;"></div>Data Source</div>
+                    <div class="legend-item"><div class="legend-color" style="background: #50c878;"></div>Scheduler</div>
+                    <div class="legend-item"><div class="legend-color" style="background: #f5a623;"></div>Processing</div>
+                    <div class="legend-item"><div class="legend-color" style="background: #e94e77;"></div>Decision</div>
+                    <div class="legend-item"><div class="legend-color" style="background: #d3d3d3; border: 2px dashed #999999;"></div>External</div>
+                    <div class="legend-item"><div class="legend-color" style="background: #9b59b6;"></div>Repository</div>
+                    <div class="legend-item"><div class="legend-color" style="background: #27ae60;"></div>Reporting</div>
+                    <div class="legend-item"><div style="width: 15px; height: 2px; background: #1e3c72; margin-right: 8px;"></div>Main Flow</div>
+                    <div class="legend-item"><div style="width: 15px; height: 2px; background: #50c878; margin-right: 8px;"></div>Success</div>
+                    <div class="legend-item"><div style="width: 15px; height: 2px; background: #e94e77; margin-right: 8px;"></div>Error</div>
+                </div>
+            </div>
+        </div>
+    </div>
+<!-- Code injected by live-server -->
+<script>
+	// <![CDATA[  <-- For SVG support
+	if ('WebSocket' in window) {
+		(function () {
+			function refreshCSS() {
+				var sheets = [].slice.call(document.getElementsByTagName("link"));
+				var head = document.getElementsByTagName("head")[0];
+				for (var i = 0; i < sheets.length; ++i) {
+					var elem = sheets[i];
+					var parent = elem.parentElement || head;
+					parent.removeChild(elem);
+					var rel = elem.rel;
+					if (elem.href && typeof rel != "string" || rel.length == 0 || rel.toLowerCase() == "stylesheet") {
+						var url = elem.href.replace(/(&|\?)_cacheOverride=\d+/, '');
+						elem.href = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_cacheOverride=' + (new Date().valueOf());
+					}
+					parent.appendChild(elem);
+				}
+			}
+			var protocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
+			var address = protocol + window.location.host + window.location.pathname + '/ws';
+			var socket = new WebSocket(address);
+			socket.onmessage = function (msg) {
+				if (msg.data == 'reload') window.location.reload();
+				else if (msg.data == 'refreshcss') refreshCSS();
+			};
+			if (sessionStorage && !sessionStorage.getItem('IsThisFirstTime_Log_From_LiveServer')) {
+				console.log('Live reload enabled.');
+				sessionStorage.setItem('IsThisFirstTime_Log_From_LiveServer', true);
+			}
+		})();
+	}
+	else {
+		console.error('Upgrade your browser. This Browser is NOT supported WebSocket for Live-Reloading.');
+	}
+	// ]]>
+</script>
+
+</body></html>
